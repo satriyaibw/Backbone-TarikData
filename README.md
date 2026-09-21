@@ -1,6 +1,6 @@
 # Backbone V3 — Karangasem Data Hub
 
-> **Single Source of Truth** untuk integrasi **Satu Data Pendidikan Kemendikdasmen (Pusdatin) — Backbone V3** di Kabupaten Karangasem. UI web ringan untuk penarikan data 15 tabel + 8 kecamatan via Docker + Cloudflare Quick Tunnel. Output CSV terpisah + ZIP, tanpa benturan dependensi.
+> **Single Source of Truth** untuk integrasi **Satu Data Pendidikan Kemendikdasmen (Pusdatin) — Backbone V3** di Kabupaten Karangasem. UI web ringan untuk penarikan data 15 tabel + 8 kecamatan via Docker + Cloudflare Quick Tunnel. Output **3 CSV gabungan per tabel (tanpa bronze audit)** — 1 tabel × 8 kec → 1 CSV all Karangasem + ZIP, filter `kode_wilayah_sumber` di Excel, tanpa benturan dependensi.
 
 ---
 
@@ -11,12 +11,12 @@
 **Masalah yang diselesaikan:**
 - Data Dapodik duplikat & tidak sinkron antar sistem (Perpres 39/2019, UU PDP 27/2022).
 - Akses API butuh `username/password/API-Key → Token Bearer` time-limited, paginasi `max 500`, filter `last_update`, otorisasi `wilayah/kolom/jadwal/IP`.
-- Window akses sempit (`tanggal:4`) — butuh tarik efisien `8 kec x 15 tabel = 120 CSV` dalam 1 klik.
+- Window akses sempit (`tanggal:4`) — butuh tarik efisien `8 kec x 15 tabel` dalam 1 klik, tanpa 120 file audit terpisah.
 
 **Hasil:**
 - Login `200` + `wilayah 8 Karangasem` terverifikasi live (`backbone_kab_karangasem`).
 - Tarik `by-wilayah 6 digit / by-npsn 8 digit / cari / npsn-changed` dengan `last_update` incremental.
-- Opsi B: `multiselect tabel + multiselect kecamatan → 120 CSV + 1 ZIP` dalam `6-10 menit`.
+- **Tanpa Bronze (Update 21 Sep 2026):** `multiselect tabel + multiselect kecamatan → 3 tabel → 3 CSV gabungan` (`sekolah_KARANGASEM_2026-09-04.csv` 800 rows, `kode_wilayah_sumber` untuk filter per kec) + 1 ZIP dalam `6-10 menit`. Cocok jadwal sebulan sekali — tidak ada `bronze/` 120 file terpisah, hemat file & langsung SSoT.
 
 **Status akses saat ini (21 Sep 2026):** `GET /user-info/schedule → tanggal:4` — hanya tanggal 4 tiap bulan yang buka. Di luar itu `metadata:[]` & `by-wilayah {"keterangan":"Tidak ada kolom..."}`. Ubah jadwal via `layanan.data.kemendikdasmen.go.id → Jadwal Akses API` atau PIC Pusdatin.
 
@@ -43,7 +43,7 @@
 | **Metadata** | `GET /metadata` & `/metadata/last-update` otorisasi kolom per user | `core/backbone_client.py` |
 | **Referensi** | `GET /referensi/daftar` & `GET /referensi?ref=` + `GET /referensi/download` ZIP (Juknis:5) | `core/backbone_client.py` |
 | **Data** | `GET /data/by-npsn (8)`, `/by-wilayah (6)`, `/cari (nik/nisn/nuptk+verifikasi)`, `/npsn-changed` delta incremental | `core/backbone_client.py` |
-| **Opsi B** | `multiselect` 15 tabel × 8 kec = 120 kombinasi → loop paginasi `per_page 500 max_pages 200 delay 0.2` → `BackboneClient.save_csv` per file → `ZIP` + progress 2-level + ringkasan `Tabel|Kode|Rows|File|Status|Waktu` + preview | `app.py` |
+| **Tanpa Bronze** | `multiselect` 15 tabel × 8 kec = 24 request → grouped per tabel in-memory + inject `kode_wilayah_sumber` & `nama_kecamatan` → dedup `npsn/nisn/nuptk` → `1 CSV per tabel all kec` (misal `sekolah_KARANGASEM_2026-09-04.csv`) → `ZIP` 3 file + progress 2-level + ringkasan `Tabel|Rows|File|Kec` + preview `kode_wilayah_sumber` filter Excel | `app.py` |
 | **Keamanan** | `.env 600`, `non-root appuser`, `HEALTHCHECK`, `.dockerignore .env`, `API_KEY/Password ***` masking, log scrub, `enableCORS false`, volume `.env:ro` dihapus (hanya `env_file`) | `Dockerfile`, `docker-compose.yml`, `.streamlit/config.toml` |
 | **Observability** | `st.metric latency`, `X-Process-Time` bench, `docker logs` health, `st.fragment` isolasi rerun | `app.py`, `core/backbone_client.py` |
 
@@ -55,11 +55,11 @@
 
 ```
 Backbone_Project/
-├── app.py                      # Streamlit UI Opsi B (393 baris)
+├── app.py                      # Streamlit UI Tanpa Bronze (404 baris, 3 CSV gabungan)
 ├── core/
 │   ├── __init__.py
 │   └── backbone_client.py      # Session+Retry, fix bug collection, CSV, ZIP (273 baris)
-├── data/                       # Volume host ← CSV + ZIP output (./data:/app/data)
+├── data/                       # Volume host ← 3 CSV gabungan + ZIP (./data:/app/data, tanpa bronze/)
 ├── .streamlit/
 │   └── config.toml             # headless, CORS false, XSRF true
 ├── Dockerfile                  # python:3.11-slim, non-root, HEALTHCHECK
@@ -133,24 +133,27 @@ streamlit run app.py --server.port 8501
 2. **Cek Wilayah** `📍` → `8 kec` `220801-220808` dari `API` (atau `FALLBACK` jika block) — `Source: API • Cache 1h`.
 3. **Cek Jadwal** `📅` → `tanggal: [4]` → `⛔ TUTUP` jika bukan tanggal 4, `✅ BUKA` jika pas. `POST /user-info/request 400` di luar jadwal adalah expected.
 4. **Cek Metadata** `🗂️` → `[]` di luar jadwal, `>0` di tanggal 4.
-5. **Tarik Opsi B:**
-   - `Tabel` → `Pilih Semua Tabel` atau subset
-   - `Kecamatan` → `Pilih Semua Kec` (hanya mode `by-wilayah`)
-   - `Mode`: `by-wilayah` (6 digit), `by-npsn` (8 digit), `cari` (butuh `kolom_induk+nomor_induk+verifikasi`), `npsn-changed` (delta)
+5. **Tarik Tanpa Bronze (Gabung):**
+   - `Tabel` → `Pilih Semua Tabel` atau subset (misal `sekolah, ptk, peserta_didik` → **3 CSV**)
+   - `Kecamatan` → `Pilih Semua Kec` (8 Karangasem, akan digabung per tabel)
+   - `Mode`: `by-wilayah` (6 digit), `by-npsn` (8 digit), `cari`, `npsn-changed` (delta)
    - `last_update`, `per_page 500`, `max_pages 20`, `delay 0.2`
-   - Klik `🚀 Tarik Semua` → progress `Kombinasi 12/120 — ptk @ 220804` + tabel ringkasan live → `ZIP karangasem_2026-09-04_120kombinasi.zip` → `⬇️ Download ZIP` + preview 10 rows.
-6. **Ambil File:** `Backbone_Project/data/*.csv` di host (volume) + ZIP.
+   - Klik `🚀 Tarik Gabung (1 CSV per Tabel All Kecamatan) + ZIP` → progress `3/24 sekolah @ 220803` + ringkasan `Tabel|Rows|File|Kec` → `ZIP karangasem_2026-09-04_3tabel_gabung.zip` (isi `sekolah_KARANGASEM_2026-09-04.csv`, `ptk_...`, `peserta_didik_...`) → `⬇️ Download ZIP` + preview 10 rows (kolom `kode_wilayah_sumber` untuk filter per kec di Excel).
+6. **Ambil File:** `Backbone_Project/data/*.csv` (3 file) + ZIP di host (volume).
 
-### C. Contoh Tarik Semua Karangasem
+### C. Contoh Tarik Semua Karangasem (Tanpa Bronze)
 
 ```bash
-# UI: Tabel = Pilih Semua 15, Kecamatan = Pilih Semua 8, last_update = 2026-09-01
-# Hasil: 120 CSV
-#   sekolah_220801_2026-09-01.csv
-#   ptk_220804_2026-09-01.csv
-#   ...
-# + karangasem_2026-09-01_120kombinasi.zip
-# Estimasi: 6-10 menit (240 request x 1.8s + delay) — hanya sukses tanggal 4
+# UI: Tabel = sekolah, ptk, peserta_didik (3), Kecamatan = Pilih Semua 8, last_update = 2026-09-01
+# Request: 3 x 8 = 24 by-wilayah
+# Hasil: 3 CSV gabungan (tanpa 24 file terpisah)
+#   sekolah_KARANGASEM_2026-09-01.csv        # 8 kec concat + kode_wilayah_sumber (≈800 rows)
+#   ptk_KARANGASEM_2026-09-01.csv            # 8 kec concat (≈600 rows)
+#   peserta_didik_KARANGASEM_2026-09-01.csv  # 8 kec concat (≈5k rows)
+# + karangasem_2026-09-01_3tabel_gabung.zip  # isi 3 CSV
+# Filter per kecamatan di Excel: Data > Filter kolom kode_wilayah_sumber (220801 Rendang ... 220808 Kubu)
+# Estimasi: 6-10 menit (24 x 2 pages x 1.8s + delay) — hanya sukses tanggal 4
+# Jika Pilih Semua 15 tabel → 15 CSV + 1 ZIP (bukan 120)
 ```
 
 ### D. Incremental
@@ -198,7 +201,8 @@ Set `last_update` ke tanggal terakhir tarik → `GET /data/npsn-changed?tbl_name
 
 - [ ] Named Tunnel Cloudflare (URL tetap) + Access OTP
 - [ ] `st.secrets` / `SOPS` untuk kredensial
-- [ ] Paralel `ThreadPoolExecutor` untuk 120 kombinasi (3x speedup, hati-hati 429)
+- [x] Tanpa Bronze: 3 CSV gabungan per tabel all kec (tanpa 120 file terpisah) — selesai 21 Sep 2026
+- [ ] Paralel `ThreadPoolExecutor` untuk 24 request (3 tabel x 8 kec, 3x speedup, hati-hati 429)
 - [ ] Simpan ke DB `Postgres 14+ / MSSQL 2016` (Juknis:3) + `npsn-changed` auto delta
 - [ ] Cron `tanggal:4 00:00` auto tarik + notifikasi
 
