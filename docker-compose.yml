@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backbone-v3:latest
+    container_name: backbone-v3
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Cloudflare Quick Tunnel - optional, provides public https://xxx.trycloudflare.com
+  # Gunakan ini jika ingin public link tanpa install cloudflared di host
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: backbone-cloudflared
+    command: tunnel --no-autoupdate --url http://app:8501
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    # network_mode: bridge (default)
+
+# Untuk Quick Tunnel di host (alternatif tanpa service cloudflared):
+# docker compose up app -d
+# cloudflared tunnel --url http://localhost:8501

@@ -1,0 +1,25 @@
+# Secrets - JANGAN commit kredensial NK
+.env
+.streamlit/secrets.toml
+
+# Data output
+data/*.csv
+data/*.zip
+data/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
