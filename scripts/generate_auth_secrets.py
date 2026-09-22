@@ -143,7 +143,8 @@ def main():
         print(f"  Review lalu: mv {target} {SECRETS_PATH}")
     # Jangan print password / cookie_key penuh ke log (scrub sudah)
     # Info next step
-    print(f"\nNext: echo pratyaksa | sudo -S docker compose up -d --build")
+    print(f"\nNext: sudo docker compose up -d --build  # atau docker compose up -d --build jika sudah group docker")
+    print(f"  Cek: sudo docker logs backbone-v3 --tail 20 && sudo docker ps")
 
 
 if __name__ == "__main__":
