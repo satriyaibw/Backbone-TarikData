@@ -1,6 +1,6 @@
 """
 Backbone V3 - Streamlit UI Opsi B Tanpa Bronze: 3 CSV per Tabel All Kecamatan
-Best practice: lazy wilayah, cache_resource, token persist, masking
+Best practice: lazy wilayah, cache_resource, token persist, masking, gate auth (context7: mkhorasani/streamlit-authenticator)
 """
 import os
 import time
@@ -8,15 +8,95 @@ import zipfile
 from pathlib import Path
 from datetime import date, timedelta
 
+import copy
+
 import pandas as pd
 import streamlit as st
+import yaml
 from dotenv import load_dotenv
+from streamlit_authenticator import Authenticate
+from streamlit_authenticator.utilities.exceptions import LoginError
 
 from core.backbone_client import BackboneClient
 
 load_dotenv()
 
 st.set_page_config(page_title="Backbone V3 - Penarikan Data", layout="wide", page_icon="📚")
+
+# --- Gate Auth: best practice streamlit-authenticator (bcrypt + cookie 1 hari) ---
+# secrets.toml expected: [auth] cookie_name/key/expiry + [credentials.usernames.admin]
+def _load_auth_config():
+    # Primary: load via tomllib from file (plain dict, avoids Secrets proxy recursion)
+    secrets_path = Path(".streamlit/secrets.toml")
+    if secrets_path.exists():
+        try:
+            import tomllib  # py311+
+        except ImportError:
+            import tomli as tomllib  # fallback if needed
+        try:
+            with secrets_path.open("rb") as f:
+                data = tomllib.load(f)
+            if "credentials" in data and "auth" in data:
+                return {"credentials": data["credentials"], "cookie": data["auth"]}
+        except Exception:
+            pass
+    # Fallback: st.secrets (context7: streamlit/docs st.secrets) — safe conversion
+    if "credentials" in st.secrets and "auth" in st.secrets:
+        try:
+            if hasattr(st.secrets, "to_dict"):
+                data = st.secrets.to_dict()
+                return {"credentials": data["credentials"], "cookie": data["auth"]}
+        except Exception:
+            pass
+        # last resort: shallow copy without deepcopy to avoid recursion
+        try:
+            return {
+                "credentials": dict(st.secrets["credentials"]),
+                "cookie": dict(st.secrets["auth"]),
+            }
+        except Exception:
+            pass
+    return None
+
+_auth_cfg = _load_auth_config()
+if _auth_cfg is None:
+    st.error("🔒 `secrets.toml` tidak ditemukan. Jalankan `python scripts/generate_auth_secrets.py --force` lalu restart.")
+    st.caption("Lihat `.streamlit/secrets.toml.example` sebagai template. Setelah generate, login dengan admin / password yang dibuat.")
+    st.stop()
+
+try:
+    authenticator = Authenticate(
+        _auth_cfg["credentials"],
+        _auth_cfg["cookie"]["cookie_name"],
+        _auth_cfg["cookie"]["cookie_key"],
+        float(_auth_cfg["cookie"].get("cookie_expiry_days", 1)),
+        auto_hash=False,  # sudah bcrypt hash via Hasher.hash()
+    )
+except Exception as e:
+    st.error(f"Gagal init authenticator: {e}")
+    st.stop()
+
+# Render login widget — location main centered, max 5 attempts (context7: mkhorasani/streamlit-authenticator)
+try:
+    authenticator.login(location="main", max_login_attempts=5, max_concurrent_users=None, captcha=False, clear_on_submit=True)
+except LoginError as e:
+    st.error(str(e))
+    st.stop()
+except Exception as e:
+    st.error(f"Login error: {e}")
+    st.stop()
+
+# Ternary check (context7 best practice)
+_auth_status = st.session_state.get("authentication_status")
+if _auth_status is True:
+    pass  # lanjut render app
+elif _auth_status is False:
+    st.error("❌ Username/password salah — coba lagi (max 5 percobaan).")
+    st.stop()
+elif _auth_status is None:
+    st.warning("🔒 Silakan login untuk akses Backbone V3 — 1 akun admin, cookie 1 hari.")
+    st.info("Kredensial gate: `admin` / password dari `scripts/generate_auth_secrets.py`. Cookie 1 hari sinkron jadwal tanggal 4.")
+    st.stop()
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -46,6 +126,14 @@ st.title("📚 Backbone V3 — Penarikan Data Pendidikan")
 st.caption("Tanpa Bronze • 3 CSV per Tabel All Kecamatan • Gabung + Filter Excel • 8 Kec Karangasem")
 
 with st.sidebar:
+    # Auth status + logout (best practice: sidebar, use_container_width)
+    try:
+        authenticator.logout(location="sidebar", button_name="🔓 Logout", key="logout_sidebar", use_container_width=True)
+    except Exception:
+        pass
+    st.caption(f"👤 Login: **{st.session_state.get('name','')}** (`{st.session_state.get('username','')}`) • {st.session_state.get('email','')}")
+    st.caption(f"Cookie: `{_auth_cfg['cookie']['cookie_name']}` • expiry { _auth_cfg['cookie']['cookie_expiry_days']} hari")
+    st.divider()
     st.header("⚙️ Konfigurasi")
     st.text_input("BASE_URL", value=BASE_URL, disabled=True)
     st.text_input("BASE_URL_LOGIN", value=BASE_URL_LOGIN, disabled=True)

@@ -78,6 +78,12 @@ class BackboneClient:
             except Exception:
                 detail = resp.text[:500]
             raise ValueError(f"Login 422 validation error: {detail}")
+        if resp.status_code == 500:
+            body = resp.text[:500] if resp.text else "Internal Server Error"
+            raise RuntimeError(
+                f"Server 500 — Pusdatin auth sedang gangguan/maintenance (bukan salah password). "
+                f"Coba lagi 1-2 menit, jika tetap 500 hubungi PIC Pusdatin (Juknis:7). Body: {body}"
+            )
         resp.raise_for_status()
         j = resp.json()
         self.token = j.get("access_token")
